@@ -40,9 +40,9 @@ RUN --mount=type=secret,id=extra_ca,required=false set -eu; \
     rm -f /tmp/manifest.json /tmp/ca.pem; \
     /usr/local/bin/claude --version
 
-COPY yard-git-credential /usr/local/bin/yard-git-credential
+COPY yard-git-credential yard-pr /usr/local/bin/
 COPY gitconfig /etc/gitconfig
-RUN chmod 0755 /usr/local/bin/yard-git-credential \
+RUN chmod 0755 /usr/local/bin/yard-git-credential /usr/local/bin/yard-pr \
  && useradd --uid 1000 --user-group --home-dir /sandbox --create-home --shell /bin/bash sandbox
 
 # Headless, no self-updates, no telemetry or error reporting from the CLI.

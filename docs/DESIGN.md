@@ -160,8 +160,13 @@ become `status: invalid`.
 5. **Disk quota needs root.** See SPIKES risk 3; a root helper with a single
    sudoers rule applies XFS project quotas.
 6. **GraphQL is unprovable.** openshell-prover does not model GraphQL, so no
-   credential reaches `/graphql`; workers open PRs with
-   `gh api -X POST repos/{o}/{r}/pulls` and push content with git.
+   credential reaches `/graphql`. Keeping GraphQL denied also matters on its
+   own: `mergePullRequest` and auto-merge are GraphQL mutations that would
+   undercut the merge guarantee. **Limitation:** `gh pr create` and most
+   `gh pr`/`gh issue` commands use GraphQL and fail inside the sandbox. The
+   base image ships `yard-pr` (REST: open the job's PR, or print its URL with
+   `--status`), the worker prompt tells Claude to use it, and `gh api` with
+   REST paths keeps working. Content goes through `git push`.
 7. **`--no-keep`** would delete the sandbox before the last status could be
    read, and `--upload` cannot be combined with a command; yard implements
    the same semantics itself (gated start, harvest, delete).

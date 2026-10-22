@@ -1,7 +1,7 @@
 # agent-yard developer targets. `make test` is the one test command.
 PY ?= python3
 SHELL_SCRIPTS := host/bootstrap host/build-base-image host/render-nftables host/libexec/yard-quota selftest/probe.sh \
-                 images/base/yard-git-credential bin/yard bin/yardd
+                 images/base/yard-git-credential images/base/yard-pr bin/yard bin/yardd
 
 .PHONY: test unit prove lint shellcheck tofu-validate boundaries e2e
 

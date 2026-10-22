@@ -139,7 +139,7 @@ class HostTests(unittest.TestCase):
         self.clock = Clock()
         self.quota = []
         self.deps = H.Deps(openshell=self.os, github=self.gh, engine=FakeEngine(),
-                           quota_apply=lambda sb, j, n: (self.quota.append((sb, n)), self.os.calls.append(("quota", sb)))
+                           quota_apply=lambda j, n: (self.quota.append((j, n)), self.os.calls.append(("quota", j)))
                            and {"ok": True},
                            quota_release=lambda j: self.quota.append(("release", j)),
                            host_resources=lambda: (8, 16 * 1024**3), clock=self.clock,

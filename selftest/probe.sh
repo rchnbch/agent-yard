@@ -84,8 +84,10 @@ record push-default-branch blocked "$r" "$(printf '%s' "$out" | tail -c 600)"
 
 # 6. Positive: push the job branch and open a PR through the REST API.
 out=$(git push -q origin "HEAD:refs/heads/$BRANCH" 2>&1); rc=$?
-pr=$(gh api -X POST "repos/$REPO/pulls" -f title="agent-yard selftest $JOB" -f head="$BRANCH" \
-  -f base="$DEFAULT" -f body="Opened by yard selftest; must stay unmerged." --jq .number 2>/tmp/probe.err)
+echo "Opened by yard selftest; must stay unmerged." >/tmp/pr.md
+url=$(yard-pr --title "agent-yard selftest $JOB" --body-file /tmp/pr.md 2>/tmp/probe.err)
+pr=${url##*/}
+case "$pr" in ''|*[!0-9]*) pr="" ;; esac
 if [ -n "$pr" ]; then r=ok; else r=failed; fi
 record open-pull-request ok "$r" "push rc=$rc $(printf '%s' "$out" | tail -c 200) pr=${pr:-none} $(head -c 300 /tmp/probe.err)"
 [ -n "$pr" ] && status working "PR opened: https://github.com/$REPO/pull/$pr"

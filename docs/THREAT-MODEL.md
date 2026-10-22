@@ -49,6 +49,8 @@ Each guarantee below says what enforces it, what it covers, and what it does
   api.github.com (the merge endpoint is `PUT /repos/{o}/{r}/pulls/{n}/merge`)
   and `POST /repos/{o}/{r}/merges`, for every binary; GraphQL never receives
   a credential, so `mergePullRequest` and auto-merge are unauthenticated.
+  (Usability cost: `gh pr create` and most `gh` subcommands use GraphQL and
+  fail; workers use the in-image `yard-pr` REST helper.)
   **Proved** (and a merge-allowing mutant fails). Selftest:
   `push-default-branch`, `merge-pr-gh`, `merge-pr-curl`, `merge-pr-graphql`,
   host-side `default-branch-unchanged` and `pr-not-merged`.

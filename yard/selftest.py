@@ -22,6 +22,7 @@ import secrets
 import time
 
 from . import limits as L
+from . import quota as quota_mod
 from .config import SHARE_DIR
 from .github import WRITE_PERMISSIONS
 from .host import Yard
@@ -132,6 +133,11 @@ def run(yard: Yard, repo: str, read_repo: str | None, quick: bool = False,
                             if r["check"] == "read-github-token")
             check(f"{name}/token-hash-crosscheck", not any(h in seen for h in hashes),
                   f"{len(hashes)} real token hashes compared against probe findings")
+
+    # Host-side: the Podman user (where a container escape lands) cannot
+    # reach the root quota helper through sudo.
+    denied, evidence = quota_mod.podman_user_denied(yard.cfg.quota_helper)
+    check("host/podman-user-cannot-call-quota-helper", denied, evidence)
 
     t = gh.mint(inst, [repo], WRITE_PERMISSIONS)
     try:

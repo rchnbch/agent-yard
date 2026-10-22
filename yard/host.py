@@ -43,7 +43,7 @@ class Deps:
     openshell: OpenShell
     github: GitHubApp | None
     engine: images.Podman
-    quota_apply: Callable[[str, str, int], dict]
+    quota_apply: Callable[[str, int], dict]
     quota_release: Callable[[str], None]
     host_resources: Callable[[], tuple[int, int]]
     clock: Callable[[], float] = time.time
@@ -68,7 +68,7 @@ def default_deps(cfg: HostConfig) -> Deps:
         openshell=OpenShell(gateway=cfg.openshell_gateway),
         github=gh,
         engine=images.Podman(engine_cmd),
-        quota_apply=lambda sb, job, n: quota.apply(cfg.quota_helper, sb, job, n),
+        quota_apply=lambda job, n: quota.apply(cfg.quota_helper, job, n),
         quota_release=lambda job: quota.release(cfg.quota_helper, job),
         host_resources=host_resources,
     )
@@ -292,7 +292,7 @@ class Yard:
         self._wait_ready(job)
         os_.sandbox_upload(job.sandbox, updir, os.path.dirname(worker.YARD_DIR))
         # Quota before the go signal: the workload writes nothing until then.
-        q = self.deps.quota_apply(job.sandbox, job.id, lim.disk_bytes)
+        q = self.deps.quota_apply(job.id, lim.disk_bytes)
         res = os_.sandbox_exec(job.sandbox, ["/bin/sh", "-c",
                                              f"test -s {worker.JOB_FILE} && touch {worker.GO_FILE}"])
         if res.returncode != 0:

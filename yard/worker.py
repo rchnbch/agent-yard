@@ -35,10 +35,11 @@ deleted when you exit. Job id: {job_id}.
   `{default_branch}` and never merge a pull request (both are blocked).
 - Commit in small, logical steps and push with `git push -u origin {branch}`.
   Unpushed work is lost when the job ends.
-- Open exactly ONE pull request into `{default_branch}` with the REST API (GraphQL
-  and `gh pr create` are blocked):
-    gh api -X POST repos/{repo}/pulls -f title='<title>' -f head='{branch}' \\
-      -f base='{default_branch}' -f body='<summary, how you tested, open questions>'
+- Open exactly ONE pull request into `{default_branch}` with `yard-pr` (do NOT use
+  `gh pr create` or other `gh pr` commands: they need GitHub GraphQL, which is
+  blocked here). Write the description to a file first:
+    yard-pr --title '<title>' --body-file /tmp/pr.md   # prints the PR URL
+  `yard-pr --status` prints the URL of the PR if it already exists.
 {read_repos_block}- Network egress mode: {egress}. {egress_note}
 - Report progress by appending one JSON object per line to {status_file}:
     {{"status": "working", "note": "short progress note", "attn": false}}

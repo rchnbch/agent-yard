@@ -112,7 +112,7 @@ def main() -> int:
     engine_cmd = ["docker"] if args.engine == "docker" else ["podman", "--url", cfg.podman_url]
     deps = H.Deps(openshell=OpenShell(gateway="openshell"), github=gh,
                   engine=images.Podman(engine_cmd),
-                  quota_apply=lambda sb, job, n: {"stub": True, "limit_bytes": n},
+                  quota_apply=lambda job, n: {"stub": True, "limit_bytes": n},
                   quota_release=lambda job: None, host_resources=H.host_resources)
     yard = H.Yard(cfg, deps)
     req = JobRequest(repo="e2e-owner/e2e-repo", spec_text="# trivial e2e job\n", title="trivial e2e job",

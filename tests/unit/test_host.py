@@ -280,7 +280,7 @@ class HostTests(unittest.TestCase):
         job = self.yard.run(self.req(read_repos=(), egress="deny", env_project="p"))
         mk = lambda cid, host, prover="prover: no new findings", sec="": PendingRule(
             cid, "r", ["/usr/bin/python3"], [{"host": host, "port": 443, "kind": "L4"}], prover, "", sec)
-        self.os.pending = [mk("c1", "pypi.org"), mk("c2", "example.com"),
+        self.os.pending = [mk("c1", "pypi.org"), mk("c2", "api.github.com"),
                            mk("c3", "pypi.org", "prover: capability_expansion"),
                            mk("c4", "pypi.org", sec="wildcard host")]
         self.os.files["size"] = 1

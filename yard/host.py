@@ -8,6 +8,7 @@ adapters so the orchestration logic is unit-testable.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -442,13 +443,13 @@ class Yard:
         self.jobs.save(job)
 
     def _job_allowlist(self, job: Job) -> set[str]:
-        hosts = {P.ANTHROPIC_HOST, *P.GITHUB_HOSTS}
+        """Hosts a deny-mode proposal may be auto-approved for: the project's
+        registries only. Credentialed hosts (GitHub, service hosts) and
+        Anthropic always go to Alex, so an auto-approved rule can never
+        change what a credential can do."""
         if job.env_project and job.env_project in self.cfg.projects:
-            proj = self.cfg.projects[job.env_project]
-            hosts.update(proj.registries)
-            for s in proj.services:
-                hosts.update(self.cfg.services[s].hosts)
-        return hosts
+            return set(self.cfg.projects[job.env_project].registries)
+        return set()
 
     def _poll_approvals(self, job: Job) -> None:
         pending = self.deps.openshell.pending_rules(job.sandbox)
@@ -490,8 +491,8 @@ class Yard:
             return False, "could not parse endpoints"
         for ep in rule.endpoints:
             if ep.get("host") not in allow or ep.get("port") != 443:
-                return False, f"{ep.get('host')}:{ep.get('port')} is not on this job's allowlist"
-        return True, "prover-clean and within the job's deny-mode allowlist"
+                return False, f"{ep.get('host')}:{ep.get('port')} is not one of this job's registries"
+        return True, "prover-clean and only reaches this job's registries"
 
     # ------------------------------------------------------------ commands
     def status(self, job_id: str | None = None) -> dict:
@@ -544,8 +545,23 @@ class Yard:
         self._emit("approval.decided", job, proposal=proposal, approved=approve, reason=reason)
         return {"proposal": proposal, "approved": approve}
 
-    def tick(self) -> None:
-        """One yardd iteration over every running job, plus orphan cleanup."""
+    def tick(self) -> bool:
+        """One yardd iteration over every running job, plus orphan cleanup.
+
+        Only one ticker runs at a time (yardd, or selftest's wait loop); a
+        concurrent call returns False without doing anything."""
+        fd = os.open(os.path.join(self.jobs.dir, ".tick.lock"), os.O_RDWR | os.O_CREAT, 0o640)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            self._tick()
+            return True
+        finally:
+            os.close(fd)
+
+    def _tick(self) -> None:
         for job in self.jobs.active():
             try:
                 if job.state == "running":

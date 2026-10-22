@@ -103,6 +103,23 @@ def main_command(model: str | None = None) -> list[str]:
     return ["/bin/sh", "-c", script]
 
 
+GO_FILE = f"{YARD_DIR}/.go"
+GATE_TIMEOUT_S = 900
+
+
+def gated(command: list[str]) -> list[str]:
+    """Wrap the main command so it starts only after yard uploaded .yard/.
+
+    ``openshell sandbox create`` cannot combine ``--upload`` with a command,
+    so the sandbox starts with this wait loop, yard uploads the job files and
+    creates the go file, and the loop ``exec``s the real command (which then
+    is the main process; for real jobs, claude itself).
+    """
+    gate = (f'i=0; while [ ! -e {GO_FILE} ]; do i=$((i+1)); '
+            f'[ "$i" -gt {GATE_TIMEOUT_S} ] && exit 70; sleep 1; done; cd /sandbox; exec "$@"')
+    return ["/bin/sh", "-c", gate, "yard-gate", *command]
+
+
 def _clean(text: object, limit: int) -> str:
     s = _CTRL.sub("", str(text))
     return s[:limit]

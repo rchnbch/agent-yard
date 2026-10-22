@@ -152,16 +152,17 @@ class OpenShell:
 
     # sandboxes
     def sandbox_create(self, name: str, image: str, policy_path: str, providers: list[str],
-                       uploads: list[tuple[str, str]], command: list[str], cpu: str, memory: str,
+                       command: list[str], cpu: str, memory: str,
                        env_from: dict[str, str], labels: dict[str, str], approval_mode: str,
                        driver_config: dict | None = None) -> Result:
         args = ["sandbox", "create", "--name", name, "--from", image, "--policy", policy_path,
                 "--detach", "--no-auto-providers", "--no-tty", "--cpu", cpu, "--memory", memory,
-                "--approval-mode", approval_mode, "--no-git-ignore", "--restart-policy", "never"]
+                "--approval-mode", approval_mode, "--restart-policy", "never",
+                # CLAUDE_CODE_OAUTH_TOKEN is deliberately a plain env var
+                # (Alex's choice, see docs/THREAT-MODEL.md); silence the hint.
+                "--no-credential-warnings"]
         for p in providers:
             args += ["--provider", p]
-        for local, remote in uploads:
-            args += ["--upload", f"{local}:{remote}"]
         for key in env_from:
             args += ["--env-from", key]
         for k, v in labels.items():
@@ -188,6 +189,9 @@ class OpenShell:
         return self._run(["sandbox", "exec", name, "--no-tty", "--no-login-shell",
                           "--timeout", str(timeout), "--", *command],
                          check=False, timeout=timeout + 15)
+
+    def sandbox_upload(self, name: str, local: str, dest: str) -> None:
+        self._run(["sandbox", "upload", "--no-git-ignore", name, local, dest], timeout=300)
 
     def sandbox_download(self, name: str, path: str, dest: str) -> Result:
         return self._run(["sandbox", "download", name, path, dest], check=False, timeout=300)

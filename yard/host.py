@@ -29,7 +29,8 @@ from .yamlout import dumps as yaml_dumps
 
 TOKEN_REFRESH_S = 40 * 60
 READY_TIMEOUT_S = 900
-SANDBOX_PREFIX = "yard-"
+SANDBOX_PREFIX = "y-"
+MAX_SANDBOX_NAME = 19  # OpenShell routable-name limit
 
 
 class YardError(RuntimeError):
@@ -146,7 +147,7 @@ class Yard:
             job = Job(id=job_id, repo=req.repo, title=req.title, egress=req.egress,
                       branch=branch, read_repos=list(req.read_repos),
                       limits=req.limits.to_dict(), env_project=req.env_project,
-                      sandbox=f"{SANDBOX_PREFIX}{job_id}", selftest=selftest,
+                      sandbox=sandbox_name(job_id), selftest=selftest,
                       created_at=self.deps.clock())
             self.jobs.save(job)
         self._emit("job.created", job, repo=job.repo, title=job.title, egress=job.egress,
@@ -264,7 +265,8 @@ class Yard:
             project_providers.append(name)
 
         # 4. Worker files.
-        updir = os.path.join(jdir, "upload")
+        # Uploaded as a directory named .yard into /sandbox (upload keeps the name).
+        updir = os.path.join(jdir, "upload", ".yard")
         os.makedirs(updir, exist_ok=True)
         with open(os.path.join(updir, "prompt.md"), "w") as fh:
             fh.write(worker.render_prompt(job.id, job.repo, job.branch, job.default_branch,
@@ -280,15 +282,20 @@ class Yard:
         os_.sandbox_create(
             name=job.sandbox, image=job.image, policy_path=policy_path,
             providers=job.providers + project_providers,
-            uploads=[(updir, worker.YARD_DIR)],
-            command=main_command or worker.main_command(),
+            command=worker.gated(main_command or worker.main_command()),
             cpu=cpu, memory=memory,
             env_from={"CLAUDE_CODE_OAUTH_TOKEN": claude_token},
             labels={"agent-yard.job": job.id},
             approval_mode="auto" if job.egress == "open" else "manual",
         )
         self._wait_ready(job)
+        os_.sandbox_upload(job.sandbox, updir, os.path.dirname(worker.YARD_DIR))
+        # Quota before the go signal: the workload writes nothing until then.
         q = self.deps.quota_apply(job.sandbox, job.id, lim.disk_bytes)
+        res = os_.sandbox_exec(job.sandbox, ["/bin/sh", "-c",
+                                             f"test -s {worker.JOB_FILE} && touch {worker.GO_FILE}"])
+        if res.returncode != 0:
+            raise YardError(f"could not hand job files to the sandbox: {res.stderr.strip()[:300]}")
         now = self.deps.clock()
         job.state = "running"
         job.started_at = now
@@ -567,6 +574,13 @@ class Yard:
                 reaped.append(name)
                 self._emit("job.cleanup", None, sandbox=name, reason="orphan sandbox deleted")
         return reaped
+
+
+def sandbox_name(job_id: str) -> str:
+    name = f"{SANDBOX_PREFIX}{job_id}"
+    if len(name) <= MAX_SANDBOX_NAME:
+        return name
+    return f"{SANDBOX_PREFIX}{hashlib.sha256(job_id.encode()).hexdigest()[:12]}"
 
 
 def project_provider_name(project: str, service: str) -> str:

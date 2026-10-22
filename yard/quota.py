@@ -16,7 +16,7 @@ import re
 import subprocess
 from typing import Callable, Sequence
 
-NAME_RE = re.compile(r"^yard-[a-z0-9-]{4,60}$")
+NAME_RE = re.compile(r"^y-[a-z0-9-]{4,17}$")
 
 Run = Callable[[Sequence[str]], subprocess.CompletedProcess]
 

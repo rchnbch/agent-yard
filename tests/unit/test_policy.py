@@ -137,6 +137,10 @@ class YamlTests(unittest.TestCase):
         self.assertIn("c: []", text)
 
 
+if os.environ.get("YARD_REQUIRE_PROVER") == "1" and not shutil.which("openshell-prover"):
+    raise RuntimeError("YARD_REQUIRE_PROVER=1 but openshell-prover is not on PATH")
+
+
 @unittest.skipUnless(shutil.which("openshell-prover"), "openshell-prover not installed")
 class ProverTests(unittest.TestCase):
     """The acceptance proofs. CI installs the pinned prover and runs these."""

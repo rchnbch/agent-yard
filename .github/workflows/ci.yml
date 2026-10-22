@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "j*-agent-yard-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  OPENSHELL_VERSION: "0.1.5"
+  # sha256 of openshell_0.1.5-1_amd64.deb (from the release checksum file).
+  OPENSHELL_DEB_SHA256: "6af7859a87ab0b3bf96aef2216db191b597308ac00df9bfe5d0e5e9912f8e2ab"
+
+jobs:
+  test:
+    name: make test (unit + openshell-prover proofs)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned openshell-prover
+        run: |
+          deb="openshell_${OPENSHELL_VERSION}-1_amd64.deb"
+          curl -fsSL -o "$deb" "https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/$deb"
+          echo "${OPENSHELL_DEB_SHA256}  $deb" | sha256sum -c -
+          dpkg-deb -x "$deb" "$RUNNER_TEMP/openshell"
+          echo "$RUNNER_TEMP/openshell/usr/bin" >> "$GITHUB_PATH"
+      - run: openshell-prover --version
+      - name: make test
+        env:
+          YARD_REQUIRE_PROVER: "1"
+        run: make test
+      - name: Boundary files are what make_boundaries.py writes
+        run: |
+          python3 policies/boundaries/make_boundaries.py
+          git diff --exit-code -- policies/boundaries
+
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+      - run: make shellcheck
+
+  tofu:
+    name: tofu validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.10.6"
+      - run: tofu fmt -check -recursive infra
+      - run: make tofu-validate
+
+  base-image:
+    name: base image builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: docker build images/base
+        run: docker buildx build --load -t localhost/agent-yard/base:ci images/base
+      - name: smoke
+        run: |
+          docker run --rm localhost/agent-yard/base:ci sh -c \
+            'set -e; claude --version; git --version; gh --version | head -1; jq --version; test "$(id -u)" = 1000'
+          docker image inspect localhost/agent-yard/base:ci \
+            --format '{{index .Config.Labels "org.agent-yard.base"}} {{json .Config.Env}}' | tee /dev/stderr \
+            | grep -v -e ANTHROPIC_API_KEY -e ANTHROPIC_AUTH_TOKEN

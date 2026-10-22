@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Build (or rebuild) localhost/agent-yard/base:latest as the rootless Podman
+# user. Project images build FROM it; rebuilding invalidates their cache tags.
+set -euo pipefail
+REPO_DIR=${REPO_DIR:-/opt/agent-yard}
+POD_USER=${POD_USER:-yard-pod}
+SOCK=unix:///run/agent-yard/podman/podman.sock
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
+ctx=$(mktemp -d)
+cp -r "$REPO_DIR/images/base/." "$ctx/"
+chown -R "$POD_USER:$POD_USER" "$ctx"
+runuser -u "$POD_USER" -- podman --url "$SOCK" build --pull=newer \
+  -t localhost/agent-yard/base:latest "$ctx"
+rm -rf "$ctx"
+runuser -u "$POD_USER" -- podman --url "$SOCK" image inspect \
+  --format '{{index .Config.Labels "org.agent-yard.base"}}' localhost/agent-yard/base:latest

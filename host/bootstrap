@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# agent-yard host bootstrap: takes ANY Debian 13 (trixie) box reachable over SSH
+# to a working yard. Idempotent: re-run it after pulling a new agent-yard
+# version or when `yard doctor` reports drift.
+#
+# Run as root from a checkout of this repo copied to the host:
+#   rsync -a --delete ./ root@HOST:/opt/agent-yard/
+#   ssh root@HOST /opt/agent-yard/host/bootstrap --tailscale-authkey-stdin < tskey.txt
+#
+# The Tailscale auth key is read from stdin (or YARD_TS_AUTHKEY_FILE) and
+# never written to cloud-init. Every other secret is pushed afterwards with
+# `yard secrets set ...` over Tailscale.
+#
+# Environment:
+#   YARD_STORAGE_DEVICE  block device for the XFS container store (recommended;
+#                        e.g. a Hetzner volume). Formatted ONLY if it has no
+#                        filesystem. Without it a sparse loop file is used.
+#   YARD_STORAGE_SIZE    loop-file size (default 200G)
+#   YARD_ADMIN_KEYS      file of SSH public keys allowed to log in as `yard`
+#                        (default: root's authorized_keys)
+set -euo pipefail
+
+OPENSHELL_VERSION="0.1.5"
+# sha256 of openshell_${OPENSHELL_VERSION}-1_<arch>.deb from the release's
+# openshell-checksums-sha256.txt, pinned here so a tampered release asset
+# AND a tampered checksum file would both be needed to slip past.
+declare -A OPENSHELL_DEB_SHA256=(
+  [amd64]="6af7859a87ab0b3bf96aef2216db191b597308ac00df9bfe5d0e5e9912f8e2ab"
+  [arm64]="ae381703f78061141bbac44aa85fb7d9856cb567d2ab2b4306318365f5466ac5"
+)
+
+YARD_USER=yard            # gateway user: OpenShell gateway, yardd, secrets
+POD_USER=yard-pod         # rootless Podman user that owns the sandboxes
+SOCK_GROUP=yard-podsock   # may talk to the Podman API socket
+REPO_DIR=/opt/agent-yard
+STATE=/var/lib/agent-yard
+STORE=$STATE/containers
+SOCK_DIR=/run/agent-yard/podman
+TS_KEY_STDIN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale-authkey-stdin) TS_KEY_STDIN=1 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+log() { printf '\n==> %s\n' "$*"; }
+die() { echo "bootstrap: $*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "run as root"
+# shellcheck source=/dev/null
+. /etc/os-release
+if [ "${ID:-}" != debian ] || [ "${VERSION_ID:-}" != 13 ]; then
+  die "Debian 13 required (found ${PRETTY_NAME:-unknown})"
+fi
+[ -d "$REPO_DIR/yard" ] || die "copy this repo to $REPO_DIR first"
+ARCH=$(dpkg --print-architecture)
+case "$ARCH" in amd64|arm64) ;; *) die "unsupported architecture $ARCH" ;; esac
+
+TS_KEY=""
+if [ "$TS_KEY_STDIN" = 1 ]; then
+  IFS= read -r TS_KEY || true
+  [ -n "$TS_KEY" ] || die "--tailscale-authkey-stdin given but stdin was empty"
+elif [ -n "${YARD_TS_AUTHKEY_FILE:-}" ]; then
+  TS_KEY=$(cat "$YARD_TS_AUTHKEY_FILE")
+fi
+
+as_user() { # as_user USER CMD...: run with that user's systemd --user bus
+  local u=$1; shift
+  local uid; uid=$(id -u "$u")
+  runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" HOME="$(getent passwd "$u" | cut -d: -f6)" "$@"
+}
+
+log "packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q --no-install-recommends \
+  ca-certificates curl gnupg jq git python3 sudo openssh-client openssh-server \
+  podman uidmap passt slirp4netns dbus-user-session systemd-container \
+  xfsprogs nftables iproute2 rsync
+podman_version=$(podman --version | awk '{print $3}')
+case "$podman_version" in 5.*) ;; *) die "Podman 5.x required (got $podman_version); see docs/DESIGN.md 'Docker fallback'" ;; esac
+[ -f /sys/fs/cgroup/cgroup.controllers ] || die "cgroups v2 required"
+grep -qw landlock /sys/kernel/security/lsm || die "Landlock LSM not enabled (lsm=$(cat /sys/kernel/security/lsm))"
+
+log "tailscale"
+if ! command -v tailscale >/dev/null; then
+  curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg" -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  curl -fsSL "https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list" -o /etc/apt/sources.list.d/tailscale.list
+  apt-get update -q && apt-get install -y -q tailscale
+fi
+systemctl enable --now tailscaled
+if ! tailscale status >/dev/null 2>&1; then
+  [ -n "$TS_KEY" ] || die "Tailscale is not logged in: re-run with --tailscale-authkey-stdin"
+  keyfile=$(mktemp); chmod 600 "$keyfile"; printf '%s' "$TS_KEY" >"$keyfile"
+  tailscale up --auth-key="file:$keyfile" --hostname="$(hostname -s)" --ssh=false
+  rm -f "$keyfile"
+fi
+unset TS_KEY
+
+log "users"
+getent group "$SOCK_GROUP" >/dev/null || groupadd --system "$SOCK_GROUP"
+id "$YARD_USER" >/dev/null 2>&1 || useradd --create-home --home-dir "/home/$YARD_USER" --shell /bin/bash "$YARD_USER"
+id "$POD_USER" >/dev/null 2>&1 || useradd --create-home --home-dir "/home/$POD_USER" --shell /usr/sbin/nologin "$POD_USER"
+usermod -aG "$SOCK_GROUP" "$YARD_USER"
+chmod 0700 "/home/$YARD_USER" "/home/$POD_USER"
+grep -q "^$POD_USER:" /etc/subuid || usermod --add-subuids 200000-1199999 "$POD_USER"
+grep -q "^$POD_USER:" /etc/subgid || usermod --add-subgids 200000-1199999 "$POD_USER"
+loginctl enable-linger "$YARD_USER" "$POD_USER"
+keys=${YARD_ADMIN_KEYS:-/root/.ssh/authorized_keys}
+if [ -f "$keys" ]; then
+  install -d -m 0700 -o "$YARD_USER" -g "$YARD_USER" "/home/$YARD_USER/.ssh"
+  install -m 0600 -o "$YARD_USER" -g "$YARD_USER" "$keys" "/home/$YARD_USER/.ssh/authorized_keys"
+fi
+
+log "XFS container store with project quotas ($STORE)"
+install -d -m 0755 "$STATE"
+if ! findmnt -n "$STORE" >/dev/null; then
+  if [ -n "${YARD_STORAGE_DEVICE:-}" ]; then
+    dev=$YARD_STORAGE_DEVICE
+    if [ -z "$(blkid -o value -s TYPE "$dev" 2>/dev/null)" ]; then mkfs.xfs -q "$dev"; fi
+    [ "$(blkid -o value -s TYPE "$dev")" = xfs ] || die "$dev is not XFS; refusing to touch it"
+    src="UUID=$(blkid -o value -s UUID "$dev")"
+  else
+    img=$STATE/containers.img
+    [ -f "$img" ] || { truncate -s "${YARD_STORAGE_SIZE:-200G}" "$img"; mkfs.xfs -q "$img"; }
+    src=$img
+  fi
+  install -d "$STORE"
+  opts="defaults,prjquota,noatime"
+  [ -z "${YARD_STORAGE_DEVICE:-}" ] && opts="loop,$opts"
+  grep -q " $STORE " /etc/fstab || echo "$src $STORE xfs $opts 0 0" >>/etc/fstab
+  mount "$STORE"
+fi
+findmnt -no OPTIONS "$STORE" | grep -q prjquota || die "$STORE is mounted without prjquota"
+install -d -m 0700 -o "$POD_USER" -g "$POD_USER" "$STORE/storage" "$STORE/volumes"
+touch /etc/projects /etc/projid
+
+log "rootless Podman for $POD_USER (API socket in $SOCK_DIR)"
+podhome=/home/$POD_USER
+install -d -m 0700 -o "$POD_USER" -g "$POD_USER" "$podhome/.config" "$podhome/.config/containers" \
+  "$podhome/.config/systemd" "$podhome/.config/systemd/user"
+cat >"$podhome/.config/containers/storage.conf" <<EOF
+[storage]
+driver = "overlay"
+graphroot = "$STORE/storage"
+runroot = "/run/user/$(id -u "$POD_USER")/containers"
+EOF
+cat >"$podhome/.config/containers/containers.conf" <<EOF
+[engine]
+volume_path = "$STORE/volumes"
+EOF
+install -m 0644 "$REPO_DIR/host/systemd/yard-podman-api.service" "$podhome/.config/systemd/user/"
+chown -R "$POD_USER:$POD_USER" "$podhome/.config"
+install -m 0644 "$REPO_DIR/host/tmpfiles-agent-yard.conf" /etc/tmpfiles.d/agent-yard.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/agent-yard.conf
+systemctl start "user@$(id -u "$POD_USER").service"
+as_user "$POD_USER" systemctl --user daemon-reload
+as_user "$POD_USER" systemctl --user enable --now yard-podman-api.service
+for _ in $(seq 1 30); do [ -S "$SOCK_DIR/podman.sock" ] && break; sleep 1; done
+[ -S "$SOCK_DIR/podman.sock" ] || die "Podman API socket did not appear"
+runuser -u "$YARD_USER" -- podman --url "unix://$SOCK_DIR/podman.sock" info --format '{{.Host.Security.Rootless}}' | grep -qx true \
+  || die "$YARD_USER cannot reach the rootless Podman API"
+
+log "sandbox egress firewall (nftables)"
+"$REPO_DIR/host/render-nftables" "$POD_USER" >/etc/nftables.d/agent-yard.nft.tmp
+install -d /etc/nftables.d
+mv /etc/nftables.d/agent-yard.nft.tmp /etc/nftables.d/agent-yard.nft
+grep -q 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf || echo 'include "/etc/nftables.d/*.nft"' >>/etc/nftables.conf
+nft -c -f /etc/nftables.d/agent-yard.nft
+nft list table inet agent_yard >/dev/null 2>&1 && nft delete table inet agent_yard
+nft -f /etc/nftables.d/agent-yard.nft
+systemctl enable nftables
+
+log "OpenShell $OPENSHELL_VERSION (checksum-verified)"
+if [ "$(dpkg-query -W -f='${Version}' openshell 2>/dev/null || true)" != "${OPENSHELL_VERSION}-1" ]; then
+  tmp=$(mktemp -d)
+  deb="openshell_${OPENSHELL_VERSION}-1_${ARCH}.deb"
+  base="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}"
+  curl -fsSL -o "$tmp/checksums.txt" "$base/openshell-checksums-sha256.txt"
+  curl -fsSL -o "$tmp/$deb" "$base/$deb"
+  pinned=${OPENSHELL_DEB_SHA256[$ARCH]}
+  listed=$(awk -v f="$deb" '$2 == f {print $1}' "$tmp/checksums.txt")
+  [ "$listed" = "$pinned" ] || die "release checksum file disagrees with the pinned sha256 for $deb"
+  echo "$pinned  $tmp/$deb" | sha256sum -c -
+  apt-get install -y -q "$tmp/$deb"
+  rm -rf "$tmp"
+fi
+openshell --version | grep -qx "openshell $OPENSHELL_VERSION" || die "openshell version mismatch"
+
+log "gateway for $YARD_USER (driver: rootless Podman, telemetry off)"
+yhome=/home/$YARD_USER
+install -d -m 0700 -o "$YARD_USER" -g "$YARD_USER" "$yhome/.config" "$yhome/.config/openshell"
+install -m 0600 -o "$YARD_USER" -g "$YARD_USER" "$REPO_DIR/host/gateway.env" "$yhome/.config/openshell/gateway.env"
+write_gateway_toml() { # $1: guest CA path or empty
+  {
+    printf '[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = "podman"\n'
+    [ -n "$1" ] && printf 'guest_tls_ca = "%s"\n' "$1"
+    printf '\n[openshell.drivers.podman]\nsocket_path = "%s"\n' "$SOCK_DIR/podman.sock"
+  } >"$yhome/.config/openshell/gateway.toml"
+  chown "$YARD_USER:$YARD_USER" "$yhome/.config/openshell/gateway.toml"
+  chmod 0600 "$yhome/.config/openshell/gateway.toml"
+}
+[ -f "$yhome/.config/openshell/gateway.toml" ] || write_gateway_toml ""
+systemctl start "user@$(id -u "$YARD_USER").service"
+as_user "$YARD_USER" systemctl --user daemon-reload
+as_user "$YARD_USER" systemctl --user enable --now openshell-gateway
+ca="$yhome/.local/state/openshell/tls/ca.crt"
+for _ in $(seq 1 30); do [ -f "$ca" ] && break; sleep 1; done
+[ -f "$ca" ] || die "gateway did not generate its CA"
+# The rootless Podman user bind-mounts the gateway CA into supervisors and
+# cannot read the gateway user's home. The CA certificate is public.
+install -d -m 0755 /etc/agent-yard
+install -m 0644 "$ca" /etc/agent-yard/gateway-ca.crt
+write_gateway_toml /etc/agent-yard/gateway-ca.crt
+as_user "$YARD_USER" openshell-gateway config preflight --path "$yhome/.config/openshell/gateway.toml"
+as_user "$YARD_USER" systemctl --user restart openshell-gateway
+for _ in $(seq 1 30); do as_user "$YARD_USER" openshell status >/dev/null 2>&1 && break; sleep 1; done
+as_user "$YARD_USER" openshell gateway list 2>/dev/null | grep -q openshell \
+  || as_user "$YARD_USER" openshell gateway add https://127.0.0.1:17670 --local --name openshell
+as_user "$YARD_USER" openshell status | grep -q Connected || die "gateway not reachable"
+# Policy advisor on for every sandbox. Approval mode stays per sandbox
+# (yard passes --approval-mode); never set it gateway-wide.
+as_user "$YARD_USER" openshell settings set --global --key agent_policy_proposals_enabled --value true --yes
+
+log "agent-yard code, config, helper, units"
+ln -sfn "$REPO_DIR" /usr/local/share/agent-yard
+ln -sf "$REPO_DIR/bin/yard" /usr/local/bin/yard
+install -d -m 0755 /usr/local/libexec/agent-yard
+install -m 0755 -o root -g root "$REPO_DIR/host/libexec/yard-quota" /usr/local/libexec/agent-yard/yard-quota
+install -m 0440 -o root -g root "$REPO_DIR/host/sudoers-agent-yard" /etc/sudoers.d/agent-yard
+visudo -cf /etc/sudoers.d/agent-yard
+[ -f /etc/agent-yard/yard.toml ] || install -m 0644 "$REPO_DIR/host/yard.toml.example" /etc/agent-yard/yard.toml
+install -d -m 0750 -o "$YARD_USER" -g "$YARD_USER" "$STATE/state"
+install -d -m 0700 -o "$YARD_USER" -g "$YARD_USER" "$STATE/secrets" "$STATE/secrets/jobs"
+install -m 0644 "$REPO_DIR/host/systemd/yardd.service" /etc/systemd/system/yardd.service
+systemctl daemon-reload
+systemctl enable --now yardd.service
+
+log "base image"
+"$REPO_DIR/host/build-base-image"
+
+log "doctor"
+runuser -u "$YARD_USER" -- /usr/local/bin/yard --local doctor || true
+echo
+echo "Next: push secrets from the laptop (README 'Quick start' step 5), then 'yard doctor'."

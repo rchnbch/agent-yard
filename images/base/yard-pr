@@ -1,0 +1,49 @@
+#!/bin/sh
+# yard-pr: open (or show) this job's pull request through the GitHub REST API.
+#
+# Inside agent-yard sandboxes GitHub GraphQL is unreachable with credentials
+# (it can merge PRs, and openshell-prover cannot check it), so `gh pr create`
+# and most `gh pr ...` commands fail. Use this instead:
+#
+#   yard-pr --title "Add X" --body-file /tmp/pr.md     # opens the PR, prints its URL
+#   yard-pr --status                                   # URL of the open PR, if any
+#
+# Repo, head branch and base branch come from /sandbox/.yard/job.json. The
+# token is $GITHUB_TOKEN, an OpenShell placeholder resolved only for the
+# target repo's API paths.
+set -eu
+JOB=/sandbox/.yard/job.json
+API=https://api.github.com
+title="" body_file="" mode=create
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --title) title=${2:?}; shift 2 ;;
+    --body-file) body_file=${2:?}; shift 2 ;;
+    --status) mode=status; shift ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "yard-pr: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+repo=$(jq -r .repo "$JOB"); head=$(jq -r .branch "$JOB"); base=$(jq -r .default_branch "$JOB")
+owner=${repo%%/*}
+auth="Authorization: Bearer ${GITHUB_TOKEN:?GITHUB_TOKEN placeholder missing}"
+existing=$(curl -fsS -H "$auth" -H "Accept: application/vnd.github+json" \
+  "$API/repos/$repo/pulls?state=open&head=$owner:$head" | jq -r '.[0].html_url // empty')
+if [ "$mode" = status ]; then
+  [ -n "$existing" ] && echo "$existing"
+  exit 0
+fi
+if [ -n "$existing" ]; then echo "$existing"; exit 0; fi
+[ -n "$title" ] || { echo "yard-pr: --title is required" >&2; exit 2; }
+body=""
+[ -n "$body_file" ] && body=$(cat "$body_file")
+payload=$(jq -n --arg t "$title" --arg h "$head" --arg b "$base" --arg body "$body" \
+  '{title: $t, head: $h, base: $b, body: $body}')
+resp=$(curl -sS -w '\n%{http_code}' -X POST -H "$auth" -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/json" -d "$payload" "$API/repos/$repo/pulls")
+code=$(printf '%s' "$resp" | tail -n1)
+json=$(printf '%s' "$resp" | sed '$d')
+case "$code" in
+  201) printf '%s' "$json" | jq -r .html_url ;;
+  *) echo "yard-pr: GitHub returned HTTP $code: $(printf '%s' "$json" | head -c 400)" >&2; exit 1 ;;
+esac

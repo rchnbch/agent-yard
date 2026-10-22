@@ -1,0 +1,11 @@
+# agent-yard: the gateway user `yard` may run exactly these as root. The
+# Podman user `yard-pod` (which owns the sandboxes) gets NO sudo rights: a
+# container escape lands there and must not reach a root helper.
+# yard-quota takes a job id and a byte count, never a path, and re-checks
+# that its caller is `yard`.
+yard ALL=(root) NOPASSWD: /usr/local/libexec/agent-yard/yard-quota apply *, \
+                          /usr/local/libexec/agent-yard/yard-quota release *, \
+                          /usr/local/libexec/agent-yard/yard-quota check, \
+                          /usr/sbin/nft list table inet agent_yard
+# Selftest only: run, AS the Podman user, the sudo call that must be refused.
+yard ALL=(yard-pod) NOPASSWD: /usr/bin/sudo -n -- /usr/local/libexec/agent-yard/yard-quota check

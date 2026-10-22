@@ -1,0 +1,9 @@
+# cp terraform.tfvars.example terraform.tfvars (gitignored), then:
+#   export HCLOUD_TOKEN=...   # Alex's Hetzner API token
+#   tofu init && tofu plan && tofu apply
+name            = "yard1"
+server_type     = "CHOOSE-AT-APPLY-TIME" # e.g. an 8 vCPU / 16-32 GB amd64 type that is available
+location        = "fsn1"
+ssh_public_key  = "ssh-ed25519 AAAA... alex@laptop"
+admin_ssh_cidrs = [] # ["203.0.113.7/32"] for the first bootstrap only
+volume_size_gb  = 200

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Entry point for the yard CLI (laptop and host). Finds the package next to it.
+here=$(dirname "$(readlink -f "$0")")
+PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m yard.cli "$@"

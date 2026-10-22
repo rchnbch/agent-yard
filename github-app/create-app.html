@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Open this file locally in a browser while logged in to GitHub as Alex.
+     It POSTs manifest.json's content to GitHub's App-manifest flow; GitHub
+     then shows the App for review before creating it. Nothing is sent
+     anywhere else. Edit the name first: App names are globally unique. -->
+<meta charset="utf-8">
+<title>Create agent-yard GitHub App</title>
+<form action="https://github.com/settings/apps/new" method="post">
+  <p>App name: <input id="n" value="agent-yard-alex" size="40"></p>
+  <input type="hidden" name="manifest" id="manifest">
+  <button type="submit" onclick="m.name=document.getElementById('n').value; document.getElementById('manifest').value=JSON.stringify(m)">Create GitHub App from manifest</button>
+</form>
+<script>
+const m = {
+  "name": "agent-yard-alex",
+  "url": "https://github.com/rchnbch/agent-yard",
+  "description": "Private App for agent-yard: mints short-lived, repo-scoped tokens for sandboxed jobs.",
+  "public": false,
+  "hook_attributes": {"url": "https://example.invalid/agent-yard-no-webhooks", "active": false},
+  "default_events": [],
+  "default_permissions": {"contents": "write", "pull_requests": "write", "administration": "read", "metadata": "read"}
+};
+</script>

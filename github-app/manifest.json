@@ -1,0 +1,14 @@
+{
+  "name": "agent-yard-CHANGEME",
+  "url": "https://github.com/rchnbch/agent-yard",
+  "description": "Private App for agent-yard: mints short-lived, repo-scoped tokens for sandboxed jobs.",
+  "public": false,
+  "hook_attributes": { "url": "https://example.invalid/agent-yard-no-webhooks", "active": false },
+  "default_events": [],
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "administration": "read",
+    "metadata": "read"
+  }
+}

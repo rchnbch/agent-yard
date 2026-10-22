@@ -1,0 +1,7 @@
+# agent-yard: the gateway user may run exactly these as root, nothing else.
+# yard-quota re-derives every path from Podman and validates it; it takes a
+# sandbox name, a job id and a byte count, never a path.
+yard ALL=(root) NOPASSWD: /usr/local/libexec/agent-yard/yard-quota apply *, \
+                          /usr/local/libexec/agent-yard/yard-quota release *, \
+                          /usr/local/libexec/agent-yard/yard-quota check, \
+                          /usr/sbin/nft list table inet agent_yard

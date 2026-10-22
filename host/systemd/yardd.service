@@ -1,0 +1,20 @@
+[Unit]
+Description=agent-yard daemon (job polling, limits, events, cleanup)
+After=network-online.target user@.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yard
+Group=yard
+ExecStart=/opt/agent-yard/bin/yardd
+Restart=always
+RestartSec=5s
+UMask=0027
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/yard /var/lib/agent-yard/state /var/lib/agent-yard/secrets
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

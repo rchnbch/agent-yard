@@ -1,0 +1,17 @@
+# Rootless Podman API for the yard-pod user (user unit), listening on a socket
+# outside the user's private runtime dir so the gateway user (group
+# yard-podsock) can reach it. Installed by host/bootstrap.
+[Unit]
+Description=agent-yard rootless Podman API
+After=default.target
+
+[Service]
+Type=exec
+UMask=0007
+ExecStartPre=/bin/rm -f /run/agent-yard/podman/podman.sock
+ExecStart=/usr/bin/podman system service --time=0 unix:///run/agent-yard/podman/podman.sock
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target

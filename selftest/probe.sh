@@ -122,7 +122,7 @@ fi
 
 # 9. Another running sandbox's files are invisible.
 hits=$(find / -xdev -name "$CANARY" 2>/dev/null | head -5)
-procs=$(ls /proc | grep -c '^[0-9]')
+procs=$(find /proc -maxdepth 1 -name '[0-9]*' | wc -l)
 if [ -z "$hits" ]; then r=blocked; else r=reached; fi
 record read-neighbor-sandbox blocked "$r" "find hits: [$hits]; visible pids: $procs"
 
@@ -136,6 +136,6 @@ if [ "$MODE" = deny ]; then
   record deny-mode-non-allowlisted blocked "$r" "first: $res1 | after 45s: $res2"
 fi
 
-status done "selftest probe finished"
+status "done" "selftest probe finished"
 # Stay alive briefly so yardd reads the final lines before the main process exits.
 sleep 60

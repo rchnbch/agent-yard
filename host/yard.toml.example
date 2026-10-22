@@ -1,0 +1,25 @@
+# /etc/agent-yard/yard.toml: host settings for agent-yard.
+[host]
+name = "yard1"
+max_jobs = 5                      # concurrency cap
+base_image = "localhost/agent-yard/base:latest"
+podman_url = "unix:///run/agent-yard/podman/podman.sock"
+openshell_gateway = "openshell"
+poll_seconds = 15
+
+[github]
+# From the GitHub App you created (github-app/README.md).
+app_id = ""
+app_slug = ""
+private_key = "/var/lib/agent-yard/secrets/github-app.pem"
+
+# Projects: per-project secrets (OpenShell providers) and deny-mode registries.
+# Services are defined in providers/services.toml.
+# [projects.myproj]
+# services = ["openrouter", "typesafe"]
+# registries = ["pypi.org", "files.pythonhosted.org"]
+
+# Used by `yard selftest` (a random canary bound to postman-echo.com).
+[projects.selftest]
+services = ["selftest-canary"]
+registries = []

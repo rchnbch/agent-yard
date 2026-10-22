@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Print the agent_yard nftables table for the rootless Podman user.
+#
+# OpenShell sandboxes have network=none; all their egress is opened by the
+# supervisor container, which runs on the host network as the Podman user
+# (or one of its subordinate UIDs). This table is a kernel-enforced second
+# fence below the OpenShell policy: those UIDs may reach the gateway on
+# loopback and DNS, and never private, tailnet, link-local or this host's
+# own public addresses. Usage: render-nftables <podman-user>
+set -euo pipefail
+u=${1:?podman user}
+uid=$(id -u "$u")
+sub=$(awk -F: -v u="$u" '$1 == u {print $2 "-" ($2 + $3 - 1); exit}' /etc/subuid)
+[ -n "$sub" ] || { echo "no subuid range for $u" >&2; exit 1; }
+own4=$(ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}' | paste -sd, -)
+own6=$(ip -6 -o addr show scope global | awk '{split($4, a, "/"); print a[1]}' | paste -sd, -)
+cat <<NFT
+table inet agent_yard {
+  set sandbox_uids { type uid; flags interval; elements = { $uid, $sub } }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+    meta skuid != @sandbox_uids accept
+    oifname "lo" tcp dport 17670 accept comment "OpenShell gateway"
+    oifname "lo" meta l4proto { tcp, udp } th dport 53 accept comment "local resolver"
+    oifname "lo" drop
+    oifname "tailscale0" drop
+    ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/3 } drop
+    ip6 daddr { ::1, fc00::/7, fe80::/10, ff00::/8 } drop
+$( [ -n "$own4" ] && printf '    ip daddr { %s } drop comment "this host"\n' "$own4" )
+$( [ -n "$own6" ] && printf '    ip6 daddr { %s } drop comment "this host"\n' "$own6" )
+  }
+}
+NFT

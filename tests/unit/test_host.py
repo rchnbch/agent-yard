@@ -244,6 +244,32 @@ class HostTests(unittest.TestCase):
         self.assertIn(("release", job.id), self.quota)
         self.assertFalse(os.path.exists(self.yard._token_file(job.id)))
 
+    def test_final_failed_status_written_between_polls(self):
+        job = self.yard.run(self.req(read_repos=()))
+        harvested = '{"status":"working","note":"a","attn":false}\n{"status":"failed","note":"tests broke","attn":true}\n'
+
+        def harvest(j):
+            self.yard._ingest_status(j, harvested)
+        self.yard._harvest = harvest
+        self.os.sandboxes[job.sandbox]["exit_code"] = 0
+        self.yard.tick()
+        job = self.yard.jobs.load(job.id)
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(job.last_status["status"], "failed")
+
+    def test_partial_status_line_is_kept_for_next_poll(self):
+        job = self.yard.run(self.req(read_repos=(), limits=Limits(timeout_s=6000, idle_s=6000)))
+        self.os.files["status"] = '{"status":"working","note":"a","attn":false}\n{"status":"do'
+        self.yard.tick()
+        self.os.files["status"] = ('{"status":"working","note":"a","attn":false}\n'
+                                   '{"status":"done","note":"https://github.com/o/app/pull/9","attn":false}\n')
+        self.yard.tick()
+        job = self.yard.jobs.load(job.id)
+        self.assertEqual(job.status_lines, 2)
+        self.assertEqual(job.pr_url, "https://github.com/o/app/pull/9")
+        statuses = [e["data"]["status"] for e in self.yard.events_since(None)["events"] if e["type"] == "job.status"]
+        self.assertEqual(statuses, ["working", "done"])
+
     def test_timeout_and_idle_kill(self):
         a = self.yard.run(self.req(read_repos=(), limits=Limits(timeout_s=600, idle_s=120)))
         self.clock.t += 121

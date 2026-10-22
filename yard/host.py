@@ -400,6 +400,12 @@ class Yard:
             return
         if sb.get("exit_code") is not None or sb.get("phase") in ("Error", "Failed"):
             job.exit_code = sb.get("exit_code")
+            # Read the final status lines (written after the last poll) before
+            # deciding the terminal state.
+            try:
+                self._harvest(job)
+            except Exception as err:  # noqa: BLE001
+                job.errors.append(f"harvest: {err}")
             ok = job.exit_code == 0 and (job.last_status or {}).get("status") != "failed"
             self._finish(job, "finished" if ok else "failed", f"main process exited ({job.exit_code})")
             return
@@ -415,7 +421,9 @@ class Yard:
             if size != job.last_output_size:
                 job.last_output_size = size
                 job.last_output_at = now
-            self._ingest_status(job, body + ("\n" if body and not body.endswith("\n") else ""))
+            # No terminator added: an unterminated last line is still being
+            # written and must stay unparsed until the next poll.
+            self._ingest_status(job, body)
         lim = L.Limits.from_dict(job.limits)
         reason = L.check_limits(lim, now, job.started_at or now, job.last_output_at or now)
         if reason:

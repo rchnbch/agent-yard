@@ -93,6 +93,11 @@ def run(yard: Yard, repo: str, read_repo: str | None, quick: bool = False,
             _req(repo, read_repo, mode, f"st-{tag}-{mode}", timeout_s=1800),
             main_command=["/bin/sh", "/sandbox/.yard/probe.sh", mode, canary_name],
             selftest=True, extra_uploads=[(PROBE, "probe.sh")])
+    probe_ids = [jobs["adv-open"].id, jobs["adv-deny"].id]
+    _wait(yard, probe_ids, time.time() + 2400, poll)
+    yard.kill(jobs["neighbor"].id)
+
+    # Second batch, so selftest never needs more than 3 of the 5 job slots.
     if not quick:
         jobs["timeout"] = yard.run(
             _req(repo, None, "deny", f"st-{tag}-timeout", timeout_s=90),
@@ -110,10 +115,8 @@ def run(yard: Yard, repo: str, read_repo: str | None, quick: bool = False,
                           ">> /sandbox/.yard/status.jsonl; sleep 30"],
             selftest=True)
 
-    probe_ids = [jobs["adv-open"].id, jobs["adv-deny"].id]
     limit_ids = [jobs[k].id for k in ("timeout", "idle", "quota") if k in jobs]
-    _wait(yard, probe_ids + limit_ids, time.time() + 2400, poll)
-    yard.kill(jobs["neighbor"].id)
+    _wait(yard, limit_ids, time.time() + 1800, poll)
 
     for name in ("adv-open", "adv-deny"):
         job = yard.jobs.load(jobs[name].id)

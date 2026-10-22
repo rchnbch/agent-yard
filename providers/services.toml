@@ -1,0 +1,39 @@
+# Project-secret services. yard renders each entry into an OpenShell provider
+# profile whose only endpoints are `hosts`: OpenShell resolves the secret's
+# placeholder for requests to those hosts and nowhere else.
+#
+# Add a service:
+#   1. Add a [services.<id>] table below (env_var the code reads, the API
+#      hosts, and how the secret is sent: auth_style bearer|header|basic|query).
+#   2. Add the hosts to CREDENTIAL_HOSTS in policies/boundaries/make_boundaries.py,
+#      run it, review the diff, and commit the new credential-<id>.yaml boundary.
+#      Without a boundary file yard refuses jobs that attach the service.
+#   3. Reference it from a project in /etc/agent-yard/yard.toml:
+#        [projects.myproj]
+#        services = ["openrouter"]
+#   4. Store the value: yard secrets set --project myproj OPENROUTER_API_KEY
+#
+# The agent sees `OPENROUTER_API_KEY=openshell:resolve:env:...`; the real
+# value never enters the sandbox.
+
+[services.openrouter]
+env_var = "OPENROUTER_API_KEY"
+hosts = ["openrouter.ai"]
+auth_style = "bearer"
+header_name = "authorization"
+
+[services.typesafe]
+# TypeSafe API. Verify the header against TypeSafe's API docs before first
+# use; bearer authorization is assumed here.
+env_var = "TYPESAFE_API_KEY"
+hosts = ["api.typesafe.ai"]
+auth_style = "bearer"
+header_name = "authorization"
+
+[services.selftest-canary]
+# Used only by `yard selftest`: a random canary bound to postman-echo.com, so
+# the probe can show it is NOT resolved toward any other host.
+env_var = "YARD_SELFTEST_CANARY"
+hosts = ["postman-echo.com"]
+auth_style = "bearer"
+header_name = "authorization"

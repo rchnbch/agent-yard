@@ -205,6 +205,9 @@ def github_write_profile(job: JobNetwork, ips: list[str]) -> dict:
             "description": "GitHub App installation token (write, target repo)",
             "env_vars": ["GITHUB_TOKEN", "GH_TOKEN"],
             "required": True,
+            # Installation tokens live 1h; yardd refreshes them in place and
+            # the running agent keeps resolving the same placeholder.
+            "stable_placeholder": True,
             "auth_style": "bearer",
             "header_name": "authorization",
         }],
@@ -240,6 +243,7 @@ def github_read_profile(job: JobNetwork, idx: int, repos: list[str], ips: list[s
             "description": "GitHub App installation token (read-only, read_repos)",
             "env_vars": [f"YARD_GH_READ_TOKEN_{idx}"],
             "required": True,
+            "stable_placeholder": True,
             "auth_style": "bearer",
             "header_name": "authorization",
         }],

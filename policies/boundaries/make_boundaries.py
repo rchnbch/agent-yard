@@ -30,6 +30,7 @@ CREDENTIAL_HOSTS = {
     "github": ["github.com", "api.github.com"],
     "openrouter": ["openrouter.ai"],
     "typesafe": ["api.typesafe.ai"],
+    "selftest-canary": ["postman-echo.com"],
 }
 # Registries a deny-mode job may be allowlisted for (project config).
 REGISTRY_HOSTS = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org",

@@ -1,0 +1,9 @@
+# Installed as /etc/gitconfig in the agent-yard base image.
+[credential]
+	helper = /usr/local/bin/yard-git-credential
+	useHttpPath = true
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
+[init]
+	defaultBranch = main
